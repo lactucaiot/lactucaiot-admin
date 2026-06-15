@@ -793,7 +793,7 @@ async function handleAdminSave(event) {
   await loadData();
 }
 
-function handleTicketSave(event) {  
+async   function handleTicketSave(event) {  
   event.preventDefault();
   const data = formObject(event.target);
   const chamber = state.chambers.find((c) => c.id === data.chamberId);
@@ -866,5 +866,11 @@ async function loadData() {
   state.admins = adminsRes.data || [];
   state.replies = repliesRes.data || [];
 
+  render();
+}
+
+if (state.session) {
+  loadData();
+} else {
   render();
 }
