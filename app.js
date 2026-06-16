@@ -715,7 +715,7 @@ async function handleLogin(event) {
     return;
   }
 
-  const match = await window.bcrypt.compare(password, data.password);
+  const match = await dcodeIO.bcrypt.compare(password, data.password);
   if (!match) {
     state.error = "Invalid email, password, or selected role.";
     render();
@@ -748,7 +748,7 @@ async function handleChamberSave(event) {
     await supabase.from("chambers").update({
       name: data.name.trim(),
       email: data.email.trim(),
-      password: data.password,
+      password: data.password ? await dcodeIO.bcrypt.hash(data.password, 10) : undefined,
       status: data.status
     }).eq("id", data.id);
   }
@@ -758,7 +758,7 @@ async function handleChamberSave(event) {
       id: idRow,
       name: data.name.trim(),
       email: data.email.trim(),
-      password: await window.bcrypt.hash(data.password, 10),
+      password: await dcodeIO.bcrypt.hash(data.password, 10),
       status: "Pending",
       registered: new Date().toISOString().slice(0, 10)
     });
@@ -776,7 +776,7 @@ async function handleAdminSave(event) {
     await supabase.from("admins").update({
       name: data.name.trim(),
       email: data.email.trim(),
-      password: data.password,
+      password: data.password ? await dcodeIO.bcrypt.hash(data.password, 10) : undefined,
       role: data.role,
       status: data.status
     }).eq("id", data.id);
@@ -786,7 +786,7 @@ async function handleAdminSave(event) {
       id: idRow,
       name: data.name.trim(),
       email: data.email.trim(),
-      password: await window.bcrypt.hash(data.password, 10),
+      password: await dcodeIO.bcrypt.hash(data.password, 10),
       role: data.role,
       status: data.status || "Active",
   });
@@ -804,7 +804,6 @@ async function handleTicketSave(event) {
   await supabase.from("tickets").insert({
     id: idRow,
     chamber_id: data.chamberId,
-    chamber: chamber?.name || "Unknown Chamber",
     subject: data.subject.trim(),
     category: data.category,
     priority: data.priority,
