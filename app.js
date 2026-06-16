@@ -1,5 +1,7 @@
-import {createClient} from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm';
+import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm';
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js';
 
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const SESSION_KEY = "lactucaiot_session";
 
@@ -713,7 +715,7 @@ async function handleLogin(event) {
     return;
   }
 
-  const match = await bcrypt.compare(password, data.password);
+  const match = await window.bcrypt.compare(password, data.password);
   if (!match) {
     state.error = "Invalid email, password, or selected role.";
     render();
@@ -756,7 +758,7 @@ async function handleChamberSave(event) {
       id: idRow,
       name: data.name.trim(),
       email: data.email.trim(),
-      password: await bcrypt.hash(data.password, 10),
+      password: await window.bcrypt.hash(data.password, 10),
       status: "Pending",
       registered: new Date().toISOString().slice(0, 10)
     });
@@ -784,7 +786,7 @@ async function handleAdminSave(event) {
       id: idRow,
       name: data.name.trim(),
       email: data.email.trim(),
-      password: await bcrypt.hash(data.password, 10),
+      password: await window.bcrypt.hash(data.password, 10),
       role: data.role,
       status: data.status || "Active",
   });
@@ -793,7 +795,7 @@ async function handleAdminSave(event) {
   await loadData();
 }
 
-async   function handleTicketSave(event) {  
+async function handleTicketSave(event) {  
   event.preventDefault();
   const data = formObject(event.target);
   const chamber = state.chambers.find((c) => c.id === data.chamberId);
