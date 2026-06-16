@@ -29,7 +29,7 @@ function loadSession() {
 
 const state = {
   session: loadSession(),
-  active: "dashboard",
+  active: location.hash.replace("#", "") || "dashboard",
   drawerOpen: false,
   chamberSearch: "",
   ticketFilter: "All",
@@ -665,6 +665,7 @@ function bindEvents() {
     button.addEventListener("click", () => {
       state.active = button.dataset.nav;
       state.drawerOpen = false;
+      location.hash = button.dataset.nav;
       render();
     });
   });
@@ -674,6 +675,7 @@ function bindEvents() {
       setSession(null);
       state.active = "dashboard";
       state.drawerOpen = false;
+      location.hash = "";
       render();
     });
   });
@@ -944,9 +946,6 @@ if (state.session) {
 } else {
   render();
 }
-
-// ── Persistent delegated listeners for mobile drawer ──────────
-// Attached once to document so they survive every render() call.
 document.addEventListener("click", (e) => {
   if (e.target.closest("[data-open-drawer]")) {
     state.drawerOpen = true;
@@ -963,3 +962,4 @@ document.addEventListener("click", (e) => {
     // render() will be called by the nav/logout handler that also fires
   }
 });
+
