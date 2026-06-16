@@ -30,6 +30,7 @@ function loadSession() {
 const state = {
   session: loadSession(),
   active: "dashboard",
+  drawerOpen: false,
   chamberSearch: "",
   ticketFilter: "All",
   selectedTicketId: null,
@@ -148,6 +149,10 @@ function shellView() {
   return `
     <div class="app-shell">
       ${sidebarView()}
+      <div class="mobile-drawer-overlay${state.drawerOpen ? " open" : ""}" id="drawerOverlay"></div>
+      <aside class="mobile-drawer${state.drawerOpen ? " open" : ""}" id="mobileDrawer">
+        ${mobileDrawerView()}
+      </aside>
       <main class="main">
         ${topbarView()}
         <section class="content">${pageView()}</section>
@@ -166,7 +171,7 @@ function sidebarView() {
           <div class="sidebar-mark"><img src="./Logo.png" alt="" aria-hidden="true" /></div>
           <div>
             <div class="sidebar-title">LactucAIoT</div>
-            <div class="role-label">${esc(state.session.role)}</div>
+            <div class="role-label">${esc(pageTitles[state.active])}</div>
           </div>
         </div>
       </div>
@@ -184,12 +189,44 @@ function sidebarView() {
   `;
 }
 
+function mobileDrawerView() {
+  const availableNav = navItems.filter((item) => state.session.role === "Super Admin" || item.key !== "admins");
+  const initials = state.session.role === "Super Admin" ? "SA" : "AD";
+  return `
+    <div class="mobile-drawer-inner">
+      <nav class="mobile-drawer-nav" aria-label="Mobile navigation">
+        ${availableNav.map((item) => `
+          <button class="mobile-drawer-nav-item ${state.active === item.key ? "active" : ""}" data-nav="${item.key}" data-close-drawer>
+            <i class="ti ${item.icon}"></i><span>${item.label}</span>
+          </button>
+        `).join("")}
+      </nav>
+      <div class="mobile-drawer-foot">
+        <div class="mobile-drawer-user">
+          <div class="avatar">${initials}</div>
+          <div class="mobile-drawer-user-info">
+            <div class="mobile-drawer-name">${esc(state.session.name)}</div>
+            <div class="mobile-drawer-role">${esc(state.session.role)}</div>
+            <div class="mobile-drawer-date">${displayDate()}</div>
+          </div>
+        </div>
+        <button class="logout-btn mobile-drawer-logout" data-logout>
+          <i class="ti ti-logout"></i><span>Sign out</span>
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+
 function topbarView() {
   const initials = state.session.role === "Super Admin" ? "SA" : "AD";
   return `
     <header class="topbar">
-      <h1>${pageTitles[state.active]}</h1>
-      <div class="topbar-right">
+      <!-- Desktop left: page title -->
+      <h1 class="topbar-title-desktop">${pageTitles[state.active]}</h1>
+      <!-- Desktop right: date + user chip -->
+      <div class="topbar-right topbar-right-desktop">
         <span class="muted small">${displayDate()}</span>
         <div class="user-chip">
           <div class="avatar">${initials}</div>
@@ -199,6 +236,20 @@ function topbarView() {
           </div>
         </div>
       </div>
+      <!-- Mobile: brand block (logo + LactucAIoT + page name) -->
+      <div class="mobile-topbar-brand">
+        <div class="mobile-topbar-logo">
+          <img src="./Logo.png" alt="LactucAIoT logo" />
+        </div>
+        <div class="mobile-topbar-text">
+          <div class="mobile-topbar-name">LactucAIoT</div>
+          <div class="mobile-topbar-page">${esc(pageTitles[state.active])}</div>
+        </div>
+      </div>
+      <!-- Mobile: hamburger -->
+      <button class="hamburger-btn" data-open-drawer aria-label="Open menu">
+        <i class="ti ti-menu-2" style="pointer-events:none"></i>
+      </button>
     </header>
   `;
 }
@@ -613,15 +664,20 @@ function bindEvents() {
   document.querySelectorAll("[data-nav]").forEach((button) => {
     button.addEventListener("click", () => {
       state.active = button.dataset.nav;
+      state.drawerOpen = false;
       render();
     });
   });
 
-  document.querySelector("[data-logout]")?.addEventListener("click", () => {
-    setSession(null);
-    state.active = "dashboard";
-    render();
+  document.querySelectorAll("[data-logout]").forEach((button) => {
+    button.addEventListener("click", () => {
+      setSession(null);
+      state.active = "dashboard";
+      state.drawerOpen = false;
+      render();
+    });
   });
+
 
   document.querySelector("#chamberSearch")?.addEventListener("input", (event) => {
     state.chamberSearch = event.target.value;
@@ -888,3 +944,22 @@ if (state.session) {
 } else {
   render();
 }
+
+// ── Persistent delegated listeners for mobile drawer ──────────
+// Attached once to document so they survive every render() call.
+document.addEventListener("click", (e) => {
+  if (e.target.closest("[data-open-drawer]")) {
+    state.drawerOpen = true;
+    render();
+    return;
+  }
+  if (e.target.closest("#drawerOverlay")) {
+    state.drawerOpen = false;
+    render();
+    return;
+  }
+  if (e.target.closest("[data-close-drawer]")) {
+    state.drawerOpen = false;
+    // render() will be called by the nav/logout handler that also fires
+  }
+});
