@@ -43,6 +43,22 @@ const state = {
   replies: []
 };
 
+window.addEventListener( 'pageshow', (event) => {
+  if (event.persisted) {
+    if (!state.session) {
+      render();
+    }
+  }
+});  
+
+window.addEventListener( 'popstate', () => {
+  if (!state.session) {
+    history.replaceState(null, "", window.location.href);
+  } else {
+    render();
+  }
+});
+
 const pageTitles = {
   dashboard: "Dashboard",
   chambers: "Chamber Database",
@@ -58,9 +74,17 @@ const navItems = [
 ];
 
 function setSession(admin) {
-  state.session = admin ? { id: admin.id, name: admin.name, email: admin.email, role: admin.role } : null;
-  if (admin) sessionStorage.setItem(SESSION_KEY, JSON.stringify(state.session));
-  else sessionStorage.removeItem(SESSION_KEY);
+  state.session = admin 
+    ? { id: admin.id, name: admin.name, email: admin.email, role: admin.role }
+    : null;
+
+  if (admin) {
+    sessionStorage.setItem(SESSION_KEY, JSON.stringify(state.session));
+    history.replaceState(null, "", window.location.href);
+  } else {
+    sessionStorage.removeItem(SESSION_KEY);
+    history.replaceState(null, "", window.location.href);
+  }
 }
 
 function esc(value = "") {
@@ -104,6 +128,10 @@ function badge(label) {
 
 function render() {
   const app = document.getElementById("app");
+  if (!state.session) {
+    state.session = loadSession();
+  }
+
   if (!state.session) {
     app.innerHTML = loginView();
   } else {
