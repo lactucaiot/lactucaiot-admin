@@ -1,9 +1,22 @@
+const AES_KEY = "lactucaiot-secret-2024";
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm';
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js';
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const SESSION_KEY = "lactucaiot_session";
+
+function encryptPassword(plain) {
+  return CryptoJS.AES.encrypt(plain, AES_KEY).toString();
+}
+
+function decryptPassword(cipher) {
+  try {
+    return CryptoJS.AES.decrypt(cipher, AES_KEY).toString(CryptoJS.enc.Utf8);
+  } catch {
+    return "••••••••";
+  }
+}
 
 function loadSession() {
   try {
@@ -294,7 +307,7 @@ function chamberRow(c) {
       <td style="color:var(--teal)">${esc(c.email)}</td>
       <td>
         <div class="row-actions">
-          <span class="mono-pill">${esc(isVisible ? c.password : "********")}</span>
+          <span class="mono-pill">${esc(isVisible ? decryptPassword(c.password) : "••••••••••")}</span>
           <button class="icon-button" data-toggle-password="${esc(c.id)}" aria-label="Toggle chamber password"><i class="ti ${isVisible ? "ti-eye-off" : "ti-eye"}"></i></button>
         </div>
       </td>
@@ -494,7 +507,7 @@ function adminRow(a) {
       <td style="color:var(--teal)">${esc(a.email)}</td>
       <td>
         <div class="row-actions">
-          <span class="mono-pill">${esc(isVisible ? a.password : "********")}</span>
+          <span class="mono-pill">${esc(isVisible ? decryptPassword(a.password) : "••••••••••")}</span>
           <button class="icon-button" data-toggle-password="${esc(a.id)}" aria-label="Toggle admin password"><i class="ti ${isVisible ? "ti-eye-off" : "ti-eye"}"></i></button>
         </div>
       </td>
@@ -715,8 +728,8 @@ async function handleLogin(event) {
     return;
   }
 
-  const match = await dcodeIO.bcrypt.compare(password, data.password);
-  if (!match) {
+  const decrypted = decryptPassword(data.password);
+if (decrypted !== password) {
     state.error = "Invalid email, password, or selected role.";
     render();
     return;
@@ -748,7 +761,7 @@ async function handleChamberSave(event) {
     await supabase.from("chambers").update({
       name: data.name.trim(),
       email: data.email.trim(),
-      password: data.password ? await dcodeIO.bcrypt.hash(data.password, 10) : undefined,
+      password: data.password ? encryptPassword(data.password) : undefined,
       status: data.status
     }).eq("id", data.id);
   }
@@ -758,7 +771,7 @@ async function handleChamberSave(event) {
       id: idRow,
       name: data.name.trim(),
       email: data.email.trim(),
-      password: await dcodeIO.bcrypt.hash(data.password, 10),
+      password: encryptPassword(data.password),
       status: "Pending",
       registered: new Date().toISOString().slice(0, 10)
     });
@@ -776,7 +789,7 @@ async function handleAdminSave(event) {
     await supabase.from("admins").update({
       name: data.name.trim(),
       email: data.email.trim(),
-      password: data.password ? await dcodeIO.bcrypt.hash(data.password, 10) : undefined,
+      password: data.password ? encryptPassword(data.password) : undefined,
       role: data.role,
       status: data.status
     }).eq("id", data.id);
@@ -786,7 +799,7 @@ async function handleAdminSave(event) {
       id: idRow,
       name: data.name.trim(),
       email: data.email.trim(),
-      password: await dcodeIO.bcrypt.hash(data.password, 10),
+      password: encryptPassword(data.password),
       role: data.role,
       status: data.status || "Active",
   });
