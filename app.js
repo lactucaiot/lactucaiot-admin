@@ -36,6 +36,8 @@ const state = {
   selectedTicketId: null,
   visiblePasswords: {},
   modal: null,
+  nextChamberId: null,
+  nextAdminId: null,
   error: "",
   chambers: [],
   tickets: [],
@@ -162,7 +164,7 @@ function loginView() {
             <label for="loginPassword">Password</label>
             <div class="password-wrap">
               <input id="loginPassword" type="password" autocomplete="current-password" placeholder="Password" required />
-              <button type="button" class="icon-button" data-toggle-login-password aria-label="Show password"><i class="ti ti-eye"></i></button>
+              <button type="button" class="icon-button" data-toggle-input-password data-target="loginPassword"><i class="ti ti-eye"></i></button>
             </div>
           </div>
           ${state.error ? `<div class="error-box">${esc(state.error)}</div>` : ""}
@@ -342,6 +344,7 @@ function dashboardView() {
 function chambersView() {
   const query = state.chamberSearch.toLowerCase();
   const filtered = state.chambers.filter((c) =>
+    c.status !== "Rejected" &&
     [c.id, c.name, c.email, c.status].some((value) => value.toLowerCase().includes(query))
   );
 
@@ -372,7 +375,7 @@ function chambersView() {
           </tbody>
         </table>
       </div>
-      <div class="footer-note">Showing ${filtered.length} of ${state.chambers.length} chambers</div>
+      <div class="footer-note">Showing ${filtered.length} of ${state.chambers.filter(c =>c.status === "Approved" || c.status === "Pending").length} chambers</div>
     </section>
   `;
 }
@@ -380,6 +383,7 @@ function chambersView() {
 function chamberRow(c) {
   const isVisible = Boolean(state.visiblePasswords[c.id]);
   return `
+   ${c.status === "Pending" || c.status === "Approved" ? ` 
     <tr>
       <td><span class="mono-pill">${esc(c.id)}</span></td>
       <td><span class="strong">${esc(c.name)}</span></td>
@@ -392,11 +396,18 @@ function chamberRow(c) {
       </td>
       <td>
         <div class="row-actions">
+        ${c.status === "Approved" ? `
           <button class="soft-btn" data-edit-chamber="${esc(c.id)}"><i class="ti ti-pencil"></i>Edit</button>
           <button class="danger-btn" data-delete-chamber="${esc(c.id)}"><i class="ti ti-trash"></i>Delete</button>
+        ` : ""}
+          ${c.source === "app" && c.status === "Pending" ? `
+            <button class="soft-btn" data-approve-chamber="${esc(c.id)}"><i class="ti ti-check"></i>Approve</button>
+            <button class="danger-btn" data-reject-chamber="${esc(c.id)}"><i class="ti ti-x"></i>Reject</button>
+          ` : ""}
         </div>
       </td>
     </tr>
+    ` : ""}
   `;
 }
 
@@ -628,10 +639,16 @@ function chamberModal() {
           <button type="button" class="icon-button" data-close-modal aria-label="Close"><i class="ti ti-x"></i></button>
         </div>
         <div class="modal-body form-grid">
-          <div class="field"><label>Chamber ID</label><input name="id" value="${esc(item?.id || "")}" placeholder="Auto-assigned" ${item ? "readonly" : ""} required /></div>
+          <div class="field"><label>Chamber ID</label><input name="id" value="${esc(item?.id || state.nextChamberId || "")}" readonly required /></div>
           <div class="field span-2"><label>Chamber Name</label><input name="name" value="${esc(item?.name || "")}" required /></div>
           <div class="field"><label>Email</label><input name="email" type="email" value="${esc(item?.email || "")}" required /></div>
-          <div class="field"><label>Password</label><input name="password" value="${esc(item?.password || "")}" required /></div>
+          <div class="field">
+            <label for="chamberPassword">Password</label>
+            <div class="password-wrap">
+              <input id="chamberPassword" type="password" required />
+              <button type="button" class="icon-button" data-toggle-input-password data-target="chamberPassword"><i class="ti ti-eye"></i></button>
+            </div>
+          </div>
         </div>
         <div class="modal-foot">
           <button type="button" class="secondary-btn" data-close-modal>Cancel</button>
@@ -652,11 +669,17 @@ function adminModal() {
           <button type="button" class="icon-button" data-close-modal aria-label="Close"><i class="ti ti-x"></i></button>
         </div>
         <div class="modal-body form-grid">
-          <div class="field"><label>Admin ID</label><input name="id" value="${esc(item?.id || "")}" placeholder="Auto-assigned" ${item ? "readonly" : ""} required /></div>
+          <div class="field"><label>Admin ID</label><input name="id" value="${esc(item?.id ||  state.nextAdminId || "")}" readonly required /></div>
+          <div class="field"><label>Role</label><select name="role">${options(["Admin", "Super Admin"], item?.role || "Admin")}</select></div>
           <div class="field span-2"><label>Name</label><input name="name" value="${esc(item?.name || "")}" required /></div>
           <div class="field"><label>Email</label><input name="email" type="email" value="${esc(item?.email || "")}" required /></div>
-          <div class="field"><label>Password</label><input name="password" value="${esc(item?.password || "")}" required /></div>
-          <div class="field"><label>Role</label><select name="role">${options(["Admin", "Super Admin"], item?.role || "Admin")}</select></div>
+          <div class="field">
+            <label for="adminPassword">Password</label>
+            <div class="password-wrap">
+              <input id="adminPassword" type="password" required />
+              <button type="button" class="icon-button" data-toggle-input-password data-target="adminPassword"><i class="ti ti-eye"></i></button>
+            </div>
+          </div>
         </div>
         <div class="modal-foot">
           <button type="button" class="secondary-btn" data-close-modal>Cancel</button>
@@ -684,9 +707,12 @@ function bindEvents() {
   });
 
   document.querySelector("#loginForm")?.addEventListener("submit", handleLogin);
-  document.querySelector("[data-toggle-login-password]")?.addEventListener("click", () => {
-    const input = document.querySelector("#loginPassword");
-    input.type = input.type === "password" ? "text" : "password";
+  
+  document.querySelectorAll("[data-toggle-input-password]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const input = document.getElementById(button.dataset.target);
+      input.type = input.type === "password" ? "text" : "password";
+    });
   });
 
   document.querySelectorAll("[data-nav]").forEach((button) => {
@@ -726,8 +752,18 @@ function bindEvents() {
   });
 
   document.querySelectorAll("[data-open-modal]").forEach((button) => {
-    button.addEventListener("click", () => {
-      state.modal = { type: button.dataset.openModal };
+    button.addEventListener("click", async () => {
+      const modalType = button.dataset.openModal;
+      state.modal = { type: modalType };
+
+      if (modalType === "chamber") {
+        const { data } = await supabase.rpc("peek_next_chamber_id");
+        state.nextChamberId = data;
+      }
+      else if (modalType === "admin") {
+        const { data } = await supabase.rpc("peek_next_admin_id");
+        state.nextAdminId = data;
+      }
       render();
     });
   });
@@ -737,6 +773,14 @@ function bindEvents() {
       state.modal = null;
       render();
     });
+  });
+
+  document.querySelectorAll("[data-approve-chamber]").forEach((button) => {
+    button.addEventListener("click", () => approveChamber(button.dataset.approveChamber));
+  });
+
+  document.querySelectorAll("[data-reject-chamber]").forEach((button) => {
+    button.addEventListener("click", () => rejectChamber(button.dataset.rejectChamber));
   });
 
   document.querySelectorAll("[data-edit-chamber]").forEach((button) => {
@@ -858,8 +902,9 @@ async function handleChamberSave(event) {
       name: data.name.trim(),
       email: data.email.trim(),
       password: encryptPassword(data.password),
-      status: "Pending",
-      registered: new Date().toISOString().slice(0, 10)
+      status: "Approved",
+      registered: new Date().toISOString().slice(0, 10),
+      source: "admin",
     });
   }
    
@@ -940,6 +985,18 @@ async function updateTicketStatus(ticketId, status) {
   await loadData();
 }
 
+async function approveChamber(id) {
+  if (!confirm(`Approve chamber ${id}?`)) return;
+  await supabase.from("chambers").update({ status: "Approved" }).eq("id", id);
+  await loadData();
+}
+
+async function rejectChamber(id) {
+  if (!confirm(`Reject chamber ${id}?`)) return;
+  await supabase.from("chambers").update({ status: "Rejected" }).eq("id", id);
+  await loadData();
+}
+
 async function deleteChamber(id) {
   if (!confirm(`Delete chamber ${id}?`)) return;
   await supabase.from("chambers").delete().eq("id", id);
@@ -951,7 +1008,6 @@ async function deleteAdmin(id) {
   await supabase.from("admins").delete().eq("id", id);
   await loadData();
 }
-
 
 async function loadData() {
   const [ chambersRes, ticketsRes, adminsRes, repliesRes] = await Promise.all([
@@ -974,6 +1030,7 @@ if (state.session) {
 } else {
   render();
 }
+
 document.addEventListener("click", (e) => {
   if (e.target.closest("[data-open-drawer]")) {
     state.drawerOpen = true;
