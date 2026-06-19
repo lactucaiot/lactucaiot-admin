@@ -715,7 +715,7 @@ function bindEvents() {
   });
 
   document.querySelectorAll("[data-nav]").forEach((button) => {
-    button.addEventListener("click", () => {
+    button.addEventListener("click", async () => {
       state.active = button.dataset.nav;
       state.drawerOpen = false;
       location.hash = button.dataset.nav;
