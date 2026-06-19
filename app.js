@@ -248,7 +248,6 @@ function mobileDrawerView() {
   `;
 }
 
-
 function topbarView() {
   const initials = state.session.role === "Super Admin" ? "SA" : "AD";
   return `
@@ -1026,9 +1025,9 @@ async function loadData() {
 }
 
 if (state.session) {
-  loadData();
+  await loadData();
 } else {
-  render();
+  await render();
 }
 
 document.addEventListener("click", (e) => {
