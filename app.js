@@ -719,7 +719,7 @@ function bindEvents() {
       state.active = button.dataset.nav;
       state.drawerOpen = false;
       location.hash = button.dataset.nav;
-      render();
+      await loadData();
     });
   });
 
