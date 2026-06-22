@@ -641,27 +641,29 @@ function chamberModal() {
         <div class="modal-body form-grid">
           <div class="field"><label>Chamber ID</label><input name="id" value="${esc(item?.id || state.nextChamberId || "")}" readonly required /></div>
           <div class="field span-2"><label>Chamber Name</label><input name="name" value="${esc(item?.name || "")}" required /></div>
-          <div class="field"><label>Email</label><input name="email" type="email" value="${esc(item?.email || "")}" required /></div>
-          <div class="field">
-            <label for="chamberPassword">Password</label>
-            <div class="password-wrap">
-              <input id="chamberPassword" name="password" type="password" ${item ? "" : "required"} />
-              <button type="button" class="icon-button" data-toggle-input-password data-target="chamberPassword"><i class="ti ti-eye"></i></button>
-            </div>
-            ${item ? `<small class="field-hint">Leave blank to keep current password.</small>` : ""}
-            <div class="password-strength" id="chamberPasswordStrength">
-                <div class="strength-bar">
-                  <div class="strength-fill" id="chamberStrengthFill"></div>
-                </div>
-                <span class="strength-label" id="chamberStrengthLabel"></span>
-                <ul class="password-checklist">
-                  <li class="chamberCheck-length"><i class="ti ti-x"></i>At least 8 characters</li>
-                  <li class="chamberCheck-uppercase"><i class="ti ti-x"></i>Contains uppercase letter</li>
-                  <li class="chamberCheck-lowercase"><i class="ti ti-x"></i>Contains lowercase letter</li>
-                  <li class="chamberCheck-number"><i class="ti ti-x"></i>Contains number</li>
-                  <li class="chamberCheck-symbol"><i class="ti ti-x"></i>Contains symbol</li>
-                </ul>
+          <div class="field-stack">
+            <div class="field"><label>Email</label><input name="email" type="email" value="${esc(item?.email || "")}" required /></div>
+            <div class="field">
+              <label for="chamberPassword">Password</label>
+              <div class="password-wrap">
+                <input id="chamberPassword" name="password" type="password" ${item ? "" : "required"} />
+                <button type="button" class="icon-button" data-toggle-input-password data-target="chamberPassword"><i class="ti ti-eye"></i></button>
               </div>
+              ${item ? `<small class="field-hint">Leave blank to keep current password.</small>` : ""}
+            </div>
+          </div>
+          <div class="password-strength" id="chamberPasswordStrength">
+            <ul class="password-checklist">
+              <li class="chamberCheck-length"><i class="ti ti-x"></i>At least 8 characters</li>
+              <li class="chamberCheck-uppercase"><i class="ti ti-x"></i>Contains uppercase letter</li>
+              <li class="chamberCheck-lowercase"><i class="ti ti-x"></i>Contains lowercase letter</li>
+              <li class="chamberCheck-number"><i class="ti ti-x"></i>Contains number</li>
+              <li class="chamberCheck-symbol"><i class="ti ti-x"></i>Contains symbol</li>
+            </ul>
+            <div class="strength-bar">
+              <div class="strength-fill" id="chamberStrengthFill"></div>
+            </div>
+            <span class="strength-label" id="chamberStrengthLabel"></span>
           </div>
         </div>
         <div class="modal-foot">
@@ -686,27 +688,29 @@ function adminModal() {
           <div class="field"><label>Admin ID</label><input name="id" value="${esc(item?.id ||  state.nextAdminId || "")}" readonly required /></div>
           <div class="field"><label>Role</label><select name="role">${options(["Admin", "Super Admin"], item?.role || "Admin")}</select></div>
           <div class="field span-2"><label>Name</label><input name="name" value="${esc(item?.name || "")}" required /></div>
-          <div class="field"><label>Email</label><input name="email" type="email" value="${esc(item?.email || "")}" required /></div>
-          <div class="field">
-            <label for="adminPassword">Password</label>
-            <div class="password-wrap">
-              <input id="adminPassword" name="password" type="password" ${item ? "" : "required"} />
-              <button type="button" class="icon-button" data-toggle-input-password data-target="adminPassword"><i class="ti ti-eye"></i></button>
-            </div>
-            ${item ? `<small class="field-hint">Leave blank to keep current password.</small>` : ""}
-            <div class="password-strength" id="adminPasswordStrength">
-                <div class="strength-bar">
-                  <div class="strength-fill" id="adminStrengthFill"></div>
-                </div>
-                <span class="strength-label" id="adminStrengthLabel"></span>
-                <ul class="password-checklist">
-                  <li class="adminCheck-length"><i class="ti ti-x"></i>At least 8 characters</li>
-                  <li class="adminCheck-uppercase"><i class="ti ti-x"></i>Contains uppercase letter</li>
-                  <li class="adminCheck-lowercase"><i class="ti ti-x"></i>Contains lowercase letter</li>
-                  <li class="adminCheck-number"><i class="ti ti-x"></i>Contains number</li>
-                  <li class="adminCheck-symbol"><i class="ti ti-x"></i>Contains symbol</li>
-                </ul>
+          <div class="field-stack">
+            <div class="field"><label>Email</label><input name="email" type="email" value="${esc(item?.email || "")}" required /></div>
+            <div class="field">
+              <label for="adminPassword">Password</label>
+              <div class="password-wrap">
+                <input id="adminPassword" name="password" type="password" ${item ? "" : "required"} />
+                <button type="button" class="icon-button" data-toggle-input-password data-target="adminPassword"><i class="ti ti-eye"></i></button>
               </div>
+              ${item ? `<small class="field-hint">Leave blank to keep current password.</small>` : ""}
+            </div>
+          </div>
+          <div class="password-strength" id="chamberPasswordStrength">
+            <ul class="password-checklist">
+              <li class="chamberCheck-length"><i class="ti ti-x"></i>At least 8 characters</li>
+              <li class="chamberCheck-uppercase"><i class="ti ti-x"></i>Contains uppercase letter</li>
+              <li class="chamberCheck-lowercase"><i class="ti ti-x"></i>Contains lowercase letter</li>
+              <li class="chamberCheck-number"><i class="ti ti-x"></i>Contains number</li>
+              <li class="chamberCheck-symbol"><i class="ti ti-x"></i>Contains symbol</li>
+            </ul>
+            <div class="strength-bar">
+              <div class="strength-fill" id="chamberStrengthFill"></div>
+            </div>
+            <span class="strength-label" id="chamberStrengthLabel"></span>
           </div>
         </div>
         <div class="modal-foot">

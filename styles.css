@@ -172,6 +172,15 @@ button {
   right: 5px;
 }
 
+.field-stack {
+  display: grid;
+}
+
+.password-strength-side {
+  align-self: start;
+  margin-top: 18px;
+}
+
 .field-hint {
   display: block;
   margin-top: 6px;
