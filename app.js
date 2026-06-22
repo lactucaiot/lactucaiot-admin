@@ -645,9 +645,23 @@ function chamberModal() {
           <div class="field">
             <label for="chamberPassword">Password</label>
             <div class="password-wrap">
-              <input id="chamberPassword" type="password" required />
+              <input id="chamberPassword" name="password" type="password" ${item ? "" : "required"} />
               <button type="button" class="icon-button" data-toggle-input-password data-target="chamberPassword"><i class="ti ti-eye"></i></button>
             </div>
+            ${item ? `<small class="field-hint">Leave blank to keep current password.</small>` : ""}
+            <div class="password-strength" id="chamberPasswordStrength">
+                <div class="strength-bar">
+                  <div class="strength-fill" id="chamberStrengthFill"></div>
+                </div>
+                <span class="strength-label" id="chamberStrengthLabel"></span>
+                <ul class="password-checklist">
+                  <li class="chamberCheck-length"><i class="ti ti-x"></i>At least 8 characters</li>
+                  <li class="chamberCheck-uppercase"><i class="ti ti-x"></i>Contains uppercase letter</li>
+                  <li class="chamberCheck-lowercase"><i class="ti ti-x"></i>Contains lowercase letter</li>
+                  <li class="chamberCheck-number"><i class="ti ti-x"></i>Contains number</li>
+                  <li class="chamberCheck-symbol"><i class="ti ti-x"></i>Contains symbol</li>
+                </ul>
+              </div>
           </div>
         </div>
         <div class="modal-foot">
@@ -676,9 +690,23 @@ function adminModal() {
           <div class="field">
             <label for="adminPassword">Password</label>
             <div class="password-wrap">
-              <input id="adminPassword" type="password" required />
+              <input id="adminPassword" name="password" type="password" ${item ? "" : "required"} />
               <button type="button" class="icon-button" data-toggle-input-password data-target="adminPassword"><i class="ti ti-eye"></i></button>
             </div>
+            ${item ? `<small class="field-hint">Leave blank to keep current password.</small>` : ""}
+            <div class="password-strength" id="adminPasswordStrength">
+                <div class="strength-bar">
+                  <div class="strength-fill" id="adminStrengthFill"></div>
+                </div>
+                <span class="strength-label" id="adminStrengthLabel"></span>
+                <ul class="password-checklist">
+                  <li class="adminCheck-length"><i class="ti ti-x"></i>At least 8 characters</li>
+                  <li class="adminCheck-uppercase"><i class="ti ti-x"></i>Contains uppercase letter</li>
+                  <li class="adminCheck-lowercase"><i class="ti ti-x"></i>Contains lowercase letter</li>
+                  <li class="adminCheck-number"><i class="ti ti-x"></i>Contains number</li>
+                  <li class="adminCheck-symbol"><i class="ti ti-x"></i>Contains symbol</li>
+                </ul>
+              </div>
           </div>
         </div>
         <div class="modal-foot">
@@ -775,6 +803,16 @@ function bindEvents() {
     });
   });
 
+  const chamberPwd = document.querySelector("#chamberPassword");
+  if (chamberPwd) {
+    chamberPwd.addEventListener("input", () => checkPassword(chamberPwd.value, "chamber"));
+  }
+
+  const adminPwd = document.querySelector("#adminPassword");
+  if (adminPwd) {
+    adminPwd.addEventListener("input", () => checkPassword(adminPwd.value, "admin"));
+  }
+  
   document.querySelectorAll("[data-approve-chamber]").forEach((button) => {
     button.addEventListener("click", () => approveChamber(button.dataset.approveChamber));
   });
@@ -883,9 +921,78 @@ function formObject(form) {
   return Object.fromEntries(new FormData(form).entries());
 }
 
+function checkPassword(value, prefix) {
+  const check = {
+    length: value.length >= 8,
+    uppercase: /[A-Z]/.test(value),
+    lowercase: /[a-z]/.test(value),
+    number: /[0-9]/.test(value),
+    symbol: /[^A-Za-z0-9]/.test(value)
+  };
+
+  Object.keys(check).forEach((key) => {
+    const li = document.querySelector(`.${prefix}Check-${key}`);
+    if (!li) return;
+
+    const icon = li.querySelector("i");
+
+    if (check[key]) {
+      icon.className = "ti ti-check";
+      li.style.color = "green";
+    } else {
+      icon.className = "ti ti-x";
+      li.style.color = "";
+    }
+  });
+
+  let score = 0;
+
+  if (value.length === 0) {
+    score = 0;
+  } else if (value.length < 8) {
+    score = 1;
+  } else {
+    score = 1;
+
+    if (check.uppercase) score++;
+    if (check.lowercase) score++;
+    if (check.number) score++;
+    if (check.symbol) score++;
+  }
+
+  const levels = ["", "Weak", "Fair", "Good", "Strong", "Very Strong"];
+  const colors = ["", "#e74c3c", "#e67e22", "#f1c40f", "#2ecc71", "#27ae60"];
+
+  const fill = document.getElementById(`${prefix}StrengthFill`);
+  const label = document.getElementById(`${prefix}StrengthLabel`);
+
+  if (fill) {
+    fill.style.width = `${(score / 5) * 100}%`;
+    fill.style.backgroundColor = colors[score];
+  }
+
+  if (label) {
+    label.textContent = levels[score];
+    label.style.color = colors[score];
+  }
+
+  return score;
+}
+
 async function handleChamberSave(event) {
   event.preventDefault();
   const data = formObject(event.target);
+
+  const isEditing = Boolean(state.modal.id);
+
+  if (!isEditing && !data.password) {
+    alert("Password is required.")
+  }
+
+  if (data.password && data.password.length < 8) {
+    alert("Password must be at least 8 characters.");
+    return;
+  }
 
   if (state.modal.id) {
     await supabase.from("chambers").update({
@@ -916,6 +1023,17 @@ async function handleAdminSave(event) {
   event.preventDefault();
   const data = formObject(event.target);
 
+  const isEditing = Boolean(state.modal.id);
+
+  if (!isEditing && !data.password) {
+    alert("Password is required.")
+  }
+
+  if (data.password && data.password.length < 8) {
+    alert("Password must be at least 8 characters.");
+    return;
+  }
+  
   if (state.modal.id) {
     await supabase.from("admins").update({
       name: data.name.trim(),
