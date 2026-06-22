@@ -1,6 +1,7 @@
 const AES_KEY = "lactucaiot-secret-2024";
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm';
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js';
+emailjs.init("oBAdM-hZNPx9dt7-p");
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -987,12 +988,28 @@ async function updateTicketStatus(ticketId, status) {
 async function approveChamber(id) {
   if (!confirm(`Approve chamber ${id}?`)) return;
   await supabase.from("chambers").update({ status: "Approved" }).eq("id", id);
+  const chamber = state.chambers.find((c) => c.id === id);
+  await emailjs.send("service_hlvie04","template_g7rrnqw", {
+    name: chamber.name,
+    chamber_id: chamber.id,
+    status: "Approved",
+    message: "Your chamber registration has been approved! You can now log in and start using the LactucAIoT App. If you have any questions, feel free to contact our support team.",
+    email: chamber.email
+  });
   await loadData();
 }
 
 async function rejectChamber(id) {
   if (!confirm(`Reject chamber ${id}?`)) return;
   await supabase.from("chambers").update({ status: "Rejected" }).eq("id", id);
+  const chamber = state.chambers.find((c) => c.id === id);
+  await emailjs.send("service_hlvie04","template_g7rrnqw", {
+    name: chamber.name,
+    chamber_id: chamber.id,
+    status: "Rejected",
+    message: "Your chamber registration has been rejected. If you have any questions, feel free to contact our support team.",
+    email: chamber.email
+  });
   await loadData();
 }
 
