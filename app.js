@@ -1,22 +1,23 @@
-const AES_KEY = "lactucaiot-secret-2024";
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm';
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js';
-emailjs.init("oBAdM-hZNPx9dt7-p");
+emailjs.init("KR2hn-Hd5N3a_PKWp");
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const SESSION_KEY = "lactucaiot_session";
 
-function encryptPassword(plain) {
-  return CryptoJS.AES.encrypt(plain, AES_KEY).toString();
+// Passwords are hashed with bcrypt via Postgres RPC (hash_password / check_password).
+// Bcrypt hashes are one-way and cannot be decrypted or displayed — see chamberRow/adminRow.
+async function hashPassword(plain) {
+  const { data, error } = await supabase.rpc("hash_password", { plain });
+  if (error) throw error;
+  return data;
 }
 
-function decryptPassword(cipher) {
-  try {
-    return CryptoJS.AES.decrypt(cipher, AES_KEY).toString(CryptoJS.enc.Utf8);
-  } catch {
-    return "••••••••";
-  }
+async function checkPasswordMatch(plain, hashed) {
+  const { data, error } = await supabase.rpc("check_password", { plain, hashed });
+  if (error) return false;
+  return Boolean(data);
 }
 
 function loadSession() {
@@ -35,7 +36,6 @@ const state = {
   chamberSearch: "",
   ticketFilter: "All",
   selectedTicketId: null,
-  visiblePasswords: {},
   modal: null,
   nextChamberId: null,
   nextAdminId: null,
@@ -331,7 +331,7 @@ function dashboardView() {
           <div class="list-row">
             <div>
               <div class="strong small">${esc(t.subject)}</div>
-              <div class="muted tiny">${esc(t.id)} &middot; ${esc(t.chamber)}</div>
+              <div class="muted tiny">${esc(t.id)} &middot; ${esc(chamberName(t))}</div>
             </div>
             <div class="row-actions">${badge(t.priority)}${badge(t.status)}</div>
           </div>
@@ -353,7 +353,7 @@ function chambersView() {
       <div class="panel-head">
         <div>
           <div class="panel-title">Registered Chambers</div>
-          <div class="panel-subtitle">Chamber IDs, owner emails, passwords, status, and registration records</div>
+          <div class="panel-subtitle">Chamber IDs, owner emails, status, and registration records</div>
         </div>
         <div class="toolbar">
           <div class="search-box">
@@ -367,7 +367,7 @@ function chambersView() {
         <table>
           <thead>
             <tr>
-              <th>Chamber ID</th><th>Chamber Name</th><th>Email</th><th>Password</th><th>Actions</th>
+              <th>Chamber ID</th><th>Chamber Name</th><th>Email</th><th>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -375,28 +375,21 @@ function chambersView() {
           </tbody>
         </table>
       </div>
-      <div class="footer-note">Showing ${filtered.length} of ${state.chambers.filter(c =>c.status === "Approved" || c.status === "Pending").length} chambers</div>
+      <div class="footer-note">Showing ${filtered.length} of ${state.chambers.filter(c =>c.status === "Active" || c.status === "Pending").length} chambers</div>
     </section>
   `;
 }
 
 function chamberRow(c) {
-  const isVisible = Boolean(state.visiblePasswords[c.id]);
   return `
-   ${c.status === "Pending" || c.status === "Approved" ? ` 
+   ${c.status === "Pending" || c.status === "Active" ? ` 
     <tr>
       <td><span class="mono-pill">${esc(c.id)}</span></td>
       <td><span class="strong">${esc(c.name)}</span></td>
       <td style="color:var(--teal)">${esc(c.email)}</td>
       <td>
         <div class="row-actions">
-          <span class="mono-pill">${esc(isVisible ? decryptPassword(c.password) : "••••••••••")}</span>
-          <button class="icon-button" data-toggle-password="${esc(c.id)}" aria-label="Toggle chamber password"><i class="ti ${isVisible ? "ti-eye-off" : "ti-eye"}"></i></button>
-        </div>
-      </td>
-      <td>
-        <div class="row-actions">
-        ${c.status === "Approved" ? `
+        ${c.status === "Active" ? `
           <button class="soft-btn" data-edit-chamber="${esc(c.id)}"><i class="ti ti-pencil"></i>Edit</button>
           <button class="danger-btn" data-delete-chamber="${esc(c.id)}"><i class="ti ti-trash"></i>Delete</button>
         ` : ""}
@@ -457,6 +450,14 @@ function supportView() {
   `;
 }
 
+// Resolve a ticket's chamber to a human name. App-created tickets store
+// only chamber_id, so look the name up from the loaded chambers list;
+// fall back through any stored name, the id, then "Unknown".
+function chamberName(t) {
+  const c = state.chambers.find((x) => x.id === t.chamber_id);
+  return c?.name || t.chamber || t.chamber_id || "Unknown";
+}
+
 function ticketInboxItem(t) {
   const isActive = state.selectedTicketId === t.id;
   const unread = t.status === "Open";
@@ -466,7 +467,7 @@ function ticketInboxItem(t) {
   return `
     <button class="inbox-item ${isActive ? "inbox-item--active" : ""}" data-select-ticket="${esc(t.id)}">
       <div class="inbox-item-top">
-        <span class="inbox-item-from ${unread ? "inbox-item-from--unread" : ""}">${esc(t.chamber || "Unknown")}</span>
+        <span class="inbox-item-from ${unread ? "inbox-item-from--unread" : ""}">${esc(chamberName(t))}</span>
         <span class="inbox-item-date">${esc(t.date || t.created_at?.slice(0,10) || "")}</span>
       </div>
       <div class="inbox-item-subject ${unread ? "inbox-item-subject--unread" : ""}">${esc(t.subject)}</div>
@@ -481,6 +482,7 @@ function ticketInboxItem(t) {
 
 function ticketDetailView(ticket) {
   const resolved = ticket.status === "Resolved";
+  const chName = chamberName(ticket);
 
   const replies = state.replies.filter((r) => r.ticket_id === ticket.id);
 
@@ -492,7 +494,7 @@ function ticketDetailView(ticket) {
         <div class="ticket-detail-meta-row">
           <span class="mono-pill">${esc(ticket.id)}</span>
           <span class="ticket-detail-sep">·</span>
-          <span style="color:var(--text-2)">${esc(ticket.chamber || "Unknown Chamber")}</span>
+          <span style="color:var(--text-2)">${esc(chName)}</span>
           ${ticket.category ? `<span class="ticket-detail-sep">·</span><span style="color:var(--text-2)">${esc(ticket.category)}</span>` : ""}
           <span class="ticket-detail-sep">·</span>
           <span style="color:var(--muted);font-size:12px">${esc(ticket.created_at?.slice(0, 10) || "")}</span>
@@ -505,16 +507,17 @@ function ticketDetailView(ticket) {
             <button class="status-btn ${ticket.status === "In Progress" ? "status-btn--active status-btn--inprogress" : ""}" data-set-status="${esc(ticket.id)}:In Progress" ${ticket.status === "In Progress" ? "disabled" : ""}><i class="ti ti-clock"></i>In Progress</button>
             <button class="status-btn ${ticket.status === "Resolved" ? "status-btn--active status-btn--resolved" : ""}" data-set-status="${esc(ticket.id)}:Resolved" ${ticket.status === "Resolved" ? "disabled" : ""}><i class="ti ti-circle-check"></i>Resolved</button>
           </div>
+          <button class="status-btn" data-delete-ticket="${esc(ticket.id)}" style="color:#dc2626;margin-left:8px"><i class="ti ti-trash"></i>Delete</button>
         </div>
       </div>
 
       <!-- Original message block — now uses ticket.description and ticket.created_at -->
       <div class="ticket-thread">
         <div class="thread-entry thread-entry--original">
-          <div class="thread-entry-avatar">${esc((ticket.chamber || "?")[0].toUpperCase())}</div>
+          <div class="thread-entry-avatar">${esc((chName || "?")[0].toUpperCase())}</div>
           <div class="thread-entry-body">
             <div class="thread-entry-header">
-              <span class="thread-entry-name">${esc(ticket.chamber || "Unknown")}</span>
+              <span class="thread-entry-name">${esc(chName)}</span>
               <span class="thread-entry-time">${ticket.created_at ? new Date(ticket.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</span>
             </div>
             <div class="thread-entry-text">${esc(ticket.description || "No description provided.")}</div>
@@ -525,11 +528,11 @@ function ticketDetailView(ticket) {
         ${replies.map((msg) => `
           <div class="thread-entry ${msg.sender === "admin" ? "thread-entry--admin" : ""}">
             <div class="thread-entry-avatar ${msg.sender === "admin" ? "thread-entry-avatar--admin" : ""}">
-              ${msg.sender === "admin" ? "A" : esc((ticket.chamber || "?")[0].toUpperCase())}
+              ${msg.sender === "admin" ? "A" : esc((chName || "?")[0].toUpperCase())}
             </div>
             <div class="thread-entry-body">
               <div class="thread-entry-header">
-                <span class="thread-entry-name">${esc(msg.sender_name || (msg.sender === "admin" ? state.session.name : ticket.chamber || "User"))}</span>
+                <span class="thread-entry-name">${esc(msg.sender_name || (msg.sender === "admin" ? state.session.name : chName || "User"))}</span>
                 <span class="thread-entry-time">${msg.sent_at ? new Date(msg.sent_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</span>
               </div>
               <div class="thread-entry-text">${esc(msg.message)}</div>
@@ -570,7 +573,7 @@ function adminsView() {
       <div class="table-wrap">
         <table>
           <thead>
-            <tr><th>ID</th><th>Name</th><th>Email</th><th>Password</th><th>Role</th><th>Actions</th></tr>
+            <tr><th>ID</th><th>Name</th><th>Email</th><th>Role</th><th>Actions</th></tr>
           </thead>
           <tbody>
             ${state.admins.map((a) => adminRow(a)).join("")}
@@ -582,7 +585,6 @@ function adminsView() {
 }
 
 function adminRow(a) {
-  const isVisible = Boolean(state.visiblePasswords[a.id]);
   const initials = a.name.split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase();
   const canDelete = a.id !== state.session.id && a.role !== "Super Admin";
   return `
@@ -595,12 +597,6 @@ function adminRow(a) {
         </div>
       </td>
       <td style="color:var(--teal)">${esc(a.email)}</td>
-      <td>
-        <div class="row-actions">
-          <span class="mono-pill">${esc(isVisible ? decryptPassword(a.password) : "••••••••••")}</span>
-          <button class="icon-button" data-toggle-password="${esc(a.id)}" aria-label="Toggle admin password"><i class="ti ${isVisible ? "ti-eye-off" : "ti-eye"}"></i></button>
-        </div>
-      </td>
       <td>${badge(a.role)}</td>
       <td>
         <div class="row-actions">
@@ -665,6 +661,19 @@ function chamberModal() {
             </div>
             <span class="strength-label" id="chamberStrengthLabel"></span>
           </div>
+          <div class="field span-2">
+            <label>Device URL (Cloudflare Tunnel)</label>
+            <input name="device_url" type="url" placeholder="https://api.lactucaiot.app" value="${esc(item?.device_url || "")}" />
+            <small class="field-hint">The RPi4's public tunnel address — used by the app to send Control commands.</small>
+          </div>
+          <div class="field span-2">
+            <label for="chamberApiKey">API Key</label>
+            <div class="password-wrap">
+              <input id="chamberApiKey" name="api_key" type="text" value="${esc(item?.api_key || "")}" readonly />
+              <button type="button" class="icon-button" data-generate-api-key aria-label="Generate new API key"><i class="ti ti-refresh"></i></button>
+            </div>
+            <small class="field-hint">Sent by the RPi4 as X-API-Key — regenerate if this chamber's key is ever compromised.</small>
+          </div>
         </div>
         <div class="modal-foot">
           <button type="button" class="secondary-btn" data-close-modal>Cancel</button>
@@ -699,18 +708,18 @@ function adminModal() {
               ${item ? `<small class="field-hint">Leave blank to keep current password.</small>` : ""}
             </div>
           </div>
-          <div class="password-strength" id="chamberPasswordStrength">
+          <div class="password-strength" id="adminPasswordStrength">
             <ul class="password-checklist">
-              <li class="chamberCheck-length"><i class="ti ti-x"></i>At least 8 characters</li>
-              <li class="chamberCheck-uppercase"><i class="ti ti-x"></i>Contains uppercase letter</li>
-              <li class="chamberCheck-lowercase"><i class="ti ti-x"></i>Contains lowercase letter</li>
-              <li class="chamberCheck-number"><i class="ti ti-x"></i>Contains number</li>
-              <li class="chamberCheck-symbol"><i class="ti ti-x"></i>Contains symbol</li>
+              <li class="adminCheck-length"><i class="ti ti-x"></i>At least 8 characters</li>
+              <li class="adminCheck-uppercase"><i class="ti ti-x"></i>Contains uppercase letter</li>
+              <li class="adminCheck-lowercase"><i class="ti ti-x"></i>Contains lowercase letter</li>
+              <li class="adminCheck-number"><i class="ti ti-x"></i>Contains number</li>
+              <li class="adminCheck-symbol"><i class="ti ti-x"></i>Contains symbol</li>
             </ul>
             <div class="strength-bar">
-              <div class="strength-fill" id="chamberStrengthFill"></div>
+              <div class="strength-fill" id="adminStrengthFill"></div>
             </div>
-            <span class="strength-label" id="chamberStrengthLabel"></span>
+            <span class="strength-label" id="adminStrengthLabel"></span>
           </div>
         </div>
         <div class="modal-foot">
@@ -747,6 +756,12 @@ function bindEvents() {
     });
   });
 
+  document.querySelectorAll("[data-generate-api-key]").forEach((button) => {
+    button.addEventListener("click", () => {
+      document.getElementById("chamberApiKey").value = crypto.randomUUID().replace(/-/g, "");
+    });
+  });
+
   document.querySelectorAll("[data-nav]").forEach((button) => {
     button.addEventListener("click", async () => {
       state.active = button.dataset.nav;
@@ -773,14 +788,6 @@ function bindEvents() {
     const search = document.querySelector("#chamberSearch");
     search?.focus();
     search?.setSelectionRange(state.chamberSearch.length, state.chamberSearch.length);
-  });
-
-  document.querySelectorAll("[data-toggle-password]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const id = button.dataset.togglePassword;
-      state.visiblePasswords[id] = !state.visiblePasswords[id];
-      render();
-    });
   });
 
   document.querySelectorAll("[data-open-modal]").forEach((button) => {
@@ -876,6 +883,10 @@ function bindEvents() {
     });
   });
 
+  document.querySelectorAll("[data-delete-ticket]").forEach((button) => {
+    button.addEventListener("click", () => deleteTicket(button.dataset.deleteTicket));
+  });
+
   document.querySelector("[data-reply-form]")?.addEventListener("submit", handleReply);
   document.querySelector("#chamberForm")?.addEventListener("submit", handleChamberSave);
   document.querySelector("#adminForm")?.addEventListener("submit", handleAdminSave);
@@ -900,8 +911,8 @@ async function handleLogin(event) {
     return;
   }
 
-  const decrypted = decryptPassword(data.password);
-if (decrypted !== password) {
+  const passwordMatches = await checkPasswordMatch(password, data.password);
+  if (!passwordMatches) {
     state.error = "Invalid email, password, or selected role.";
     render();
     return;
@@ -1002,8 +1013,10 @@ async function handleChamberSave(event) {
     await supabase.from("chambers").update({
       name: data.name.trim(),
       email: data.email.trim(),
-      password: data.password ? encryptPassword(data.password) : undefined,
-      status: data.status
+      password: data.password ? await hashPassword(data.password) : undefined,
+      status: data.status,
+      device_url: data.device_url ? data.device_url.trim() : null,
+      api_key: data.api_key ? data.api_key.trim() : null,
     }).eq("id", data.id);
   }
   else {
@@ -1012,10 +1025,12 @@ async function handleChamberSave(event) {
       id: idRow,
       name: data.name.trim(),
       email: data.email.trim(),
-      password: encryptPassword(data.password),
-      status: "Approved",
+      password: await hashPassword(data.password),
+      status: "Active",
       registered: new Date().toISOString().slice(0, 10),
       source: "admin",
+      device_url: data.device_url ? data.device_url.trim() : null,
+      api_key: data.api_key ? data.api_key.trim() : null,
     });
   }
    
@@ -1042,7 +1057,7 @@ async function handleAdminSave(event) {
     await supabase.from("admins").update({
       name: data.name.trim(),
       email: data.email.trim(),
-      password: data.password ? encryptPassword(data.password) : undefined,
+      password: data.password ? await hashPassword(data.password) : undefined,
       role: data.role,
       status: data.status
     }).eq("id", data.id);
@@ -1052,7 +1067,7 @@ async function handleAdminSave(event) {
       id: idRow,
       name: data.name.trim(),
       email: data.email.trim(),
-      password: encryptPassword(data.password),
+      password: await hashPassword(data.password),
       role: data.role,
       status: data.status || "Active",
   });
@@ -1107,9 +1122,37 @@ async function updateTicketStatus(ticketId, status) {
   await loadData();
 }
 
+async function deleteTicket(ticketId) {
+  const ticket = state.tickets.find((t) => t.id === ticketId);
+  const who = ticket ? chamberName(ticket) : ticketId;
+  if (!confirm(`Delete ticket ${ticketId} from ${who}? This removes it for the user too and cannot be undone.`)) return;
+
+  // Remove replies first (no FK cascade assumed), then the ticket itself.
+  // .select() makes the delete return the removed rows so we can tell a
+  // real deletion apart from an RLS silent no-op (0 rows, no error).
+  await supabase.from("ticket_replies").delete().eq("ticket_id", ticketId);
+  const { data: removed, error } = await supabase
+    .from("tickets").delete().eq("id", ticketId).select();
+
+  if (error) {
+    alert("Delete failed: " + error.message);
+    return;
+  }
+  if (!removed || removed.length === 0) {
+    alert(
+      "Nothing was deleted. The tickets tables are missing a DELETE policy " +
+      "(Row-Level Security). Run Support_delete_policy.sql in Supabase, then try again."
+    );
+    return;
+  }
+
+  if (state.selectedTicketId === ticketId) state.selectedTicketId = null;
+  await loadData();
+}
+
 async function approveChamber(id) {
   if (!confirm(`Approve chamber ${id}?`)) return;
-  await supabase.from("chambers").update({ status: "Approved" }).eq("id", id);
+  await supabase.from("chambers").update({ status: "Active" }).eq("id", id);
   const chamber = state.chambers.find((c) => c.id === id);
   await emailjs.send("service_hlvie04","template_g7rrnqw", {
     name: chamber.name,
@@ -1185,4 +1228,3 @@ document.addEventListener("click", (e) => {
     // render() will be called by the nav/logout handler that also fires
   }
 });
-
