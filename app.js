@@ -796,12 +796,10 @@ function bindEvents() {
       state.modal = { type: modalType };
 
       if (modalType === "chamber") {
-        const { data } = await supabase.rpc("peek_next_chamber_id");
-        state.nextChamberId = data;
+        state.nextChamberId = await resolveNextId("chamber");
       }
       else if (modalType === "admin") {
-        const { data } = await supabase.rpc("peek_next_admin_id");
-        state.nextAdminId = data;
+        state.nextAdminId = await resolveNextId("admin");
       }
       render();
     });
@@ -936,6 +934,36 @@ function formObject(form) {
   return Object.fromEntries(new FormData(form).entries());
 }
 
+function getNextIdFor(kind) {
+  const existing = kind === "chamber" ? state.chambers : state.admins;
+  const ids = (existing || []).map((item) => String(item?.id || "")).filter(Boolean);
+
+  for (const id of ids) {
+    const match = id.match(/^(.*?)(\d+)\s*$/);
+    if (match) {
+      const prefix = match[1];
+      const number = parseInt(match[2], 10);
+      const digits = match[2].length;
+      return `${prefix}${String(number + 1).padStart(digits, "0")}`;
+    }
+  }
+
+  return kind === "chamber" ? "LC-AIOT-001" : "ADM-001";
+}
+
+async function resolveNextId(kind) {
+  const rpcName = kind === "chamber" ? "peek_next_chamber_id" : "peek_next_admin_id";
+
+  try {
+    const { data, error } = await supabase.rpc(rpcName);
+    if (!error && data) return data;
+  } catch (error) {
+    console.warn(`RPC ${rpcName} unavailable, using a local fallback ID.`, error);
+  }
+
+  return getNextIdFor(kind);
+}
+
 function checkPassword(value, prefix) {
   const check = {
     length: value.length >= 8,
@@ -997,11 +1025,11 @@ function checkPassword(value, prefix) {
 async function handleChamberSave(event) {
   event.preventDefault();
   const data = formObject(event.target);
-
-  const isEditing = Boolean(state.modal.id);
+  const isEditing = Boolean(state.modal?.id);
 
   if (!isEditing && !data.password) {
-    alert("Password is required.")
+    alert("Password is required.");
+    return;
   }
 
   if (data.password && data.password.length < 8) {
@@ -1009,71 +1037,103 @@ async function handleChamberSave(event) {
     return;
   }
 
-  if (state.modal.id) {
-    await supabase.from("chambers").update({
-      name: data.name.trim(),
-      email: data.email.trim(),
-      password: data.password ? await hashPassword(data.password) : undefined,
-      status: data.status,
-      device_url: data.device_url ? data.device_url.trim() : null,
-      api_key: data.api_key ? data.api_key.trim() : null,
-    }).eq("id", data.id);
+  const existing = isEditing ? state.chambers.find((c) => c.id === state.modal.id) : null;
+
+  try {
+    if (isEditing) {
+      const updatePayload = {
+        name: data.name.trim(),
+        email: data.email.trim(),
+        device_url: data.device_url ? data.device_url.trim() : null,
+        api_key: data.api_key ? data.api_key.trim() : null,
+      };
+
+      if (data.password) {
+        updatePayload.password = await hashPassword(data.password);
+      }
+      if (existing?.status) {
+        updatePayload.status = existing.status;
+      }
+
+      const { error } = await supabase.from("chambers").update(updatePayload).eq("id", data.id);
+      if (error) throw error;
+    } else {
+      const id = state.nextChamberId || (await resolveNextId("chamber"));
+      const { error } = await supabase.from("chambers").insert({
+        id,
+        name: data.name.trim(),
+        email: data.email.trim(),
+        password: await hashPassword(data.password),
+        status: "Active",
+        registered: new Date().toISOString().slice(0, 10),
+        source: "admin",
+        device_url: data.device_url ? data.device_url.trim() : null,
+        api_key: data.api_key ? data.api_key.trim() : null,
+      });
+      if (error) throw error;
+    }
+
+    state.modal = null;
+    await loadData();
+  } catch (error) {
+    console.error("Failed to save chamber:", error);
+    alert("Unable to save chamber. Check the browser console for details.");
   }
-  else {
-    const { data: idRow } = await supabase.rpc("next_chamber_id");
-    await supabase.from("chambers").insert({
-      id: idRow,
-      name: data.name.trim(),
-      email: data.email.trim(),
-      password: await hashPassword(data.password),
-      status: "Active",
-      registered: new Date().toISOString().slice(0, 10),
-      source: "admin",
-      device_url: data.device_url ? data.device_url.trim() : null,
-      api_key: data.api_key ? data.api_key.trim() : null,
-    });
-  }
-   
-  state.modal = null;
-  await loadData();
 }
 
 async function handleAdminSave(event) {
   event.preventDefault();
   const data = formObject(event.target);
-
-  const isEditing = Boolean(state.modal.id);
+  const isEditing = Boolean(state.modal?.id);
 
   if (!isEditing && !data.password) {
-    alert("Password is required.")
+    alert("Password is required.");
+    return;
   }
 
   if (data.password && data.password.length < 8) {
     alert("Password must be at least 8 characters.");
     return;
   }
-  
-  if (state.modal.id) {
-    await supabase.from("admins").update({
-      name: data.name.trim(),
-      email: data.email.trim(),
-      password: data.password ? await hashPassword(data.password) : undefined,
-      role: data.role,
-      status: data.status
-    }).eq("id", data.id);
-  } else {
-    const { data: idRow } = await supabase.rpc("next_admin_id");
-    await supabase.from("admins").insert({
-      id: idRow,
-      name: data.name.trim(),
-      email: data.email.trim(),
-      password: await hashPassword(data.password),
-      role: data.role,
-      status: data.status || "Active",
-  });
-}
-  state.modal = null;
-  await loadData();
+
+  const existing = isEditing ? state.admins.find((a) => a.id === state.modal.id) : null;
+
+  try {
+    if (isEditing) {
+      const updatePayload = {
+        name: data.name.trim(),
+        email: data.email.trim(),
+        role: data.role,
+      };
+
+      if (data.password) {
+        updatePayload.password = await hashPassword(data.password);
+      }
+      if (existing?.status) {
+        updatePayload.status = existing.status;
+      }
+
+      const { error } = await supabase.from("admins").update(updatePayload).eq("id", data.id);
+      if (error) throw error;
+    } else {
+      const id = state.nextAdminId || (await resolveNextId("admin"));
+      const { error } = await supabase.from("admins").insert({
+        id,
+        name: data.name.trim(),
+        email: data.email.trim(),
+        password: await hashPassword(data.password),
+        role: data.role,
+        status: "Active",
+      });
+      if (error) throw error;
+    }
+
+    state.modal = null;
+    await loadData();
+  } catch (error) {
+    console.error("Failed to save admin:", error);
+    alert("Unable to save admin. Check the browser console for details.");
+  }
 }
 
 async function handleTicketSave(event) {  
