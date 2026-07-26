@@ -1191,14 +1191,22 @@ async function deleteAdmin(id) {
 }
 
 async function loadData() {
+  const chamberColumns = "id,name,email,status,registered,device_url,source";
+
   const [ chambersRes, ticketsRes, adminsRes, repliesRes] = await Promise.all([
-    supabase.from("chambers").select("*").order("registered", { ascending: false }),
+    supabase.from("chambers").select(chamberColumns).order("registered", { ascending: false }),
     supabase.from("tickets").select("*").order("created_at", { ascending: false }),
     supabase.from("admins").select("*"),
     supabase.from("ticket_replies").select("*").order("sent_at", { ascending: true })
   ]);
-  
-  state.chambers = chambersRes.data || [];
+
+  if (chambersRes.error) {
+    console.error("Failed to load chambers:", chambersRes.error);
+    state.chambers = [];
+  } else {
+    state.chambers = chambersRes.data || [];
+  }
+
   state.tickets = ticketsRes.data || [];
   state.admins = adminsRes.data || [];
   state.replies = repliesRes.data || [];
