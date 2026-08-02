@@ -622,7 +622,49 @@ function modalView() {
   if (state.modal.type === "chamber") return chamberModal();
   if (state.modal.type === "admin") return adminModal();
   if (state.modal.type === "ticket") return ticketModal();
+  if (state.modal.type === "confirm") return confirmModal();
   return "";
+}
+
+// A confirm dialog in the portal's own styling, replacing window.confirm().
+//
+// The native dialog cannot be styled, announces the origin
+// ("lactucaiot.netlify.app says"), and looks like a browser warning rather
+// than part of the product — which is exactly the wrong tone for a
+// destructive action the operator is meant to read carefully.
+//
+// Driven through state.modal like every other dialog here, so it renders,
+// closes and rebinds with the same machinery.
+function confirmModal() {
+  const { title, body, confirmLabel, danger } = state.modal;
+  return `
+    <div class="modal-backdrop">
+      <div class="modal" style="max-width:460px">
+        <div class="modal-head">
+          <div class="panel-title">${esc(title || "Are you sure?")}</div>
+          <button type="button" class="icon-button" data-close-modal aria-label="Close"><i class="ti ti-x"></i></button>
+        </div>
+        <div class="modal-body">
+          <p style="margin:0;font-size:13px;line-height:1.6;white-space:pre-line">${esc(body || "")}</p>
+        </div>
+        <div class="modal-foot">
+          <button type="button" class="secondary-btn" data-close-modal>Cancel</button>
+          <button type="button" class="${danger ? "danger-btn" : "primary-btn"}" data-confirm-ok>
+            ${esc(confirmLabel || "Confirm")}
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// Opens the confirm modal and runs `onConfirm` if the operator agrees.
+// The callback is held outside state so it never lands in sessionStorage.
+let pendingConfirm = null;
+function askConfirm({ title, body, confirmLabel, danger = true, onConfirm }) {
+  pendingConfirm = onConfirm;
+  state.modal = { type: "confirm", title, body, confirmLabel, danger };
+  render();
 }
 
 function chamberModal() {
@@ -876,8 +918,19 @@ function bindEvents() {
 
   document.querySelectorAll("[data-close-modal]").forEach((button) => {
     button.addEventListener("click", () => {
+      pendingConfirm = null;
       state.modal = null;
       render();
+    });
+  });
+
+  document.querySelectorAll("[data-confirm-ok]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const run = pendingConfirm;
+      pendingConfirm = null;
+      state.modal = null;
+      render();
+      if (run) await run();
     });
   });
 
@@ -1302,6 +1355,22 @@ async function handleAdminSave(event) {
       const id = await resolveNextId("admin");
       const email = data.email.trim().toLowerCase();
 
+      // Pre-flight: catch a duplicate email BEFORE writing anything.
+      //
+      // Without this the insert fails on admins_email_key (23505) and
+      // the operator gets a raw Postgres constraint name. Worse, the
+      // sequence is now insert → signUp → link, so a failure part-way
+      // leaves debris to clean up. Cheaper to refuse at the door.
+      const { data: clash } = await supabase
+        .from("admins").select("id,email").eq("email", email).maybeSingle();
+      if (clash) {
+        alert(
+          `An admin with the email ${email} already exists ` +
+          `(${clash.id}).\n\nUse a different address, or edit that ` +
+          `admin instead.`);
+        return;
+      }
+
       // C-3 Stage 1 — every admin created from here on gets a Supabase
       // Auth identity, so no later migration is ever needed.
       //
@@ -1351,7 +1420,17 @@ async function handleAdminSave(event) {
 
       const { error } = await supabase.from("admins")
         .update({ auth_user_id: created.user.id }).eq("id", id);
-      if (error) throw error;
+      if (error) {
+        // The link failed — most often because that Auth user is already
+        // attached to a different admins row (auth_user_id is unique).
+        // Remove the row we just made so nothing half-formed survives.
+        await supabase.from("admins").delete().eq("id", id);
+        throw new Error(
+          `${error.message}\n\nCould not link the Auth account, so the ` +
+          `draft admin row was removed. If an Auth user already exists ` +
+          `for ${email}, delete it under Authentication → Users and try ` +
+          `again.`);
+      }
     }
 
     state.modal = null;
@@ -1428,8 +1507,19 @@ async function updateTicketStatus(ticketId, status) {
 async function deleteTicket(ticketId) {
   const ticket = state.tickets.find((t) => t.id === ticketId);
   const who = ticket ? chamberName(ticket) : ticketId;
-  if (!confirm(`Delete ticket ${ticketId} from ${who}? This removes it for the user too and cannot be undone.`)) return;
+  askConfirm({
+    title: "Delete support ticket",
+    body:
+      `${ticketId} — ${who}\n\n` +
+      `The whole conversation is removed, including for the grower. ` +
+      `They will not be told why it disappeared.\n\nThis cannot be undone.`,
+    confirmLabel: "Delete ticket",
+    danger: true,
+    onConfirm: () => reallyDeleteTicket(ticketId),
+  });
+}
 
+async function reallyDeleteTicket(ticketId) {
   // Remove replies first (no FK cascade assumed), then the ticket itself.
   // .select() makes the delete return the removed rows so we can tell a
   // real deletion apart from an RLS silent no-op (0 rows, no error).
@@ -1454,66 +1544,119 @@ async function deleteTicket(ticketId) {
 }
 
 async function approveChamber(id) {
-  if (!confirm(`Approve chamber ${id}?`)) return;
-  await supabase.from("chambers").update({ status: "Active" }).eq("id", id);
   const chamber = state.chambers.find((c) => c.id === id);
-  await emailjs.send("service_hlvie04","template_g7rrnqw", {
-    name: chamber.name,
-    chamber_id: chamber.id,
-    status: "Approved",
-    message: "Your chamber registration has been approved! You can now log in and start using the LactucAIoT App. If you have any questions, feel free to contact our support team.",
-    email: chamber.email
+  askConfirm({
+    title: "Approve chamber",
+    body:
+      `${chamber?.name || id}\n${chamber?.email || ""}\n\n` +
+      `The grower will be able to sign in, and an approval email will be ` +
+      `sent to them.`,
+    confirmLabel: "Approve",
+    danger: false,
+    onConfirm: async () => {
+      await supabase.from("chambers").update({ status: "Active" }).eq("id", id);
+      await emailjs.send("service_hlvie04", "template_g7rrnqw", {
+        name: chamber.name,
+        chamber_id: chamber.id,
+        status: "Approved",
+        message: "Your chamber registration has been approved! You can now log in and start using the LactucAIoT App. If you have any questions, feel free to contact our support team.",
+        email: chamber.email
+      });
+      await loadData();
+    },
   });
-  await loadData();
 }
 
 async function rejectChamber(id) {
-  if (!confirm(`Reject chamber ${id}?`)) return;
-  await supabase.from("chambers").update({ status: "Rejected" }).eq("id", id);
   const chamber = state.chambers.find((c) => c.id === id);
-  await emailjs.send("service_hlvie04","template_g7rrnqw", {
-    name: chamber.name,
-    chamber_id: chamber.id,
-    status: "Rejected",
-    message: "Your chamber registration has been rejected. If you have any questions, feel free to contact our support team.",
-    email: chamber.email
+  askConfirm({
+    title: "Reject chamber",
+    body:
+      `${chamber?.name || id}\n${chamber?.email || ""}\n\n` +
+      `The registration will be marked Rejected and the grower will be ` +
+      `emailed. The record is kept, so this can be reversed by editing ` +
+      `the chamber's status.`,
+    confirmLabel: "Reject",
+    danger: true,
+    onConfirm: async () => {
+      await supabase.from("chambers").update({ status: "Rejected" }).eq("id", id);
+      await emailjs.send("service_hlvie04", "template_g7rrnqw", {
+        name: chamber.name,
+        chamber_id: chamber.id,
+        status: "Rejected",
+        message: "Your chamber registration has been rejected. If you have any questions, feel free to contact our support team.",
+        email: chamber.email
+      });
+      await loadData();
+    },
   });
-  await loadData();
 }
 
 async function deleteChamber(id) {
-  if (!confirm(`Delete chamber ${id}?`)) return;
-  await supabase.from("chambers").delete().eq("id", id);
-  await loadData();
+  const chamber = state.chambers.find((c) => c.id === id);
+  askConfirm({
+    title: "Delete chamber",
+    body:
+      `${chamber?.name || id}\n${chamber?.email || ""}\n\n` +
+      `This removes the chamber and its sign-in. Readings, detections ` +
+      `and logs already recorded are NOT deleted — they simply lose the ` +
+      `chamber they belonged to.\n\nThis cannot be undone.`,
+    confirmLabel: "Delete chamber",
+    danger: true,
+    onConfirm: async () => {
+      const { error } = await supabase.from("chambers").delete().eq("id", id);
+      if (error) {
+        askConfirm({
+          title: "Could not delete chamber",
+          body: error.message,
+          confirmLabel: "Close",
+          danger: false,
+          onConfirm: async () => {},
+        });
+        return;
+      }
+      await loadData();
+    },
+  });
 }
 
 async function deleteAdmin(id) {
-  // C-3: deleting the row revokes access immediately — is_admin() looks
-  // for an admins row matching auth.uid(), and login rejects an auth
-  // user with no row. But the Supabase Auth user itself SURVIVES, and
-  // the browser cannot remove it (that needs the service key). Left
-  // alone they accumulate, and the address stays unusable for a future
-  // admin because sign-up reports it as taken.
+  // C-3: removal now takes BOTH sides — the admins row and the Supabase
+  // Auth user — through admin_delete_admin().
+  //
+  // The browser cannot call auth.admin.deleteUser(): that needs the
+  // service key, which must never ship to a client. So the deletion runs
+  // inside a SECURITY DEFINER function that checks is_admin() first.
+  // Leaving the Auth user behind was not merely untidy — it kept the
+  // address permanently unusable, because sign-up reports it as taken.
   const admin = state.admins.find((a) => a.id === id);
-  const email = admin?.email ? ` (${admin.email})` : "";
 
-  if (!confirm(
-    `Remove admin ${id}${email}?\n\n` +
-    `Access is revoked immediately. You must also delete the matching ` +
-    `user under Supabase → Authentication → Users, or that email cannot ` +
-    `be reused.`)) return;
-
-  const { error } = await supabase.from("admins").delete().eq("id", id);
-  if (error) {
-    alert("Could not remove admin: " + error.message);
-    return;
-  }
-  if (admin?.email) {
-    alert(
-      `Admin removed.\n\nNow delete this user in Supabase → ` +
-      `Authentication → Users:\n\n${admin.email}`);
-  }
-  await loadData();
+  askConfirm({
+    title: "Remove administrator",
+    body:
+      `${admin?.name || id}\n${admin?.email || ""}\n\n` +
+      `This deletes the admin record and its sign-in account. ` +
+      `Access is revoked immediately and the email becomes available ` +
+      `again.\n\nThis cannot be undone.`,
+    confirmLabel: "Remove admin",
+    danger: true,
+    onConfirm: async () => {
+      const { error } = await supabase.rpc("admin_delete_admin", {
+        p_admin_id: id,
+      });
+      if (error) {
+        askConfirm({
+          title: "Could not remove admin",
+          body: error.message,
+          confirmLabel: "Close",
+          danger: false,
+          onConfirm: async () => {},
+        });
+        return;
+      }
+      await loadData();
+    },
+  });
 }
 
 async function loadData() {
