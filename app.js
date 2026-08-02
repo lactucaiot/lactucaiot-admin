@@ -712,14 +712,18 @@ function adminModal() {
           <div class="field"><label>Role</label><select name="role">${options(["Admin", "Super Admin"], item?.role || "Admin")}</select></div>
           <div class="field span-2"><label>Name</label><input name="name" value="${esc(item?.name || "")}" required /></div>
           <div class="field-stack">
-            <div class="field"><label>Email</label><input name="email" type="email" value="${esc(item?.email || "")}" required /></div>
+            <div class="field">
+              <label>Email</label>
+              <input name="email" type="email" value="${esc(item?.email || "")}" ${item ? "readonly" : ""} required />
+              ${item ? `<small class="field-hint">Sign-in is handled by Supabase Auth. Change the email under Authentication &rarr; Users, then update it here to match.</small>` : ""}
+            </div>
             <div class="field">
               <label for="adminPassword">Password</label>
               <div class="password-wrap">
                 <input id="adminPassword" name="password" type="password" ${item ? "" : "required"} />
                 <button type="button" class="icon-button" data-toggle-input-password data-target="adminPassword"><i class="ti ti-eye"></i></button>
               </div>
-              ${item ? `<small class="field-hint">Leave blank to keep current password.</small>` : ""}
+              ${item ? `<small class="field-hint">Leave blank to keep the current password. You can only change your own &mdash; reset others under Authentication &rarr; Users.</small>` : ""}
             </div>
           </div>
           <div class="password-strength" id="adminPasswordStrength">
@@ -1032,33 +1036,70 @@ function formObject(form) {
   return Object.fromEntries(new FormData(form).entries());
 }
 
-function getNextIdFor(kind) {
-  const existing = kind === "chamber" ? state.chambers : state.admins;
-  const ids = (existing || []).map((item) => String(item?.id || "")).filter(Boolean);
-
-  for (const id of ids) {
-    const match = id.match(/^(.*?)(\d+)\s*$/);
-    if (match) {
-      const prefix = match[1];
-      const number = parseInt(match[2], 10);
-      const digits = match[2].length;
-      return `${prefix}${String(number + 1).padStart(digits, "0")}`;
-    }
-  }
-
-  return kind === "chamber" ? "LC-AIOT-001" : "ADM-001";
+// Highest numeric suffix across a set of IDs, or 0 for none.
+function highestIdNumber(ids) {
+  return (ids || [])
+    .map((id) => String(id || "").match(/(\d+)\s*$/))
+    .filter(Boolean)
+    .map((m) => parseInt(m[1], 10))
+    .filter((n) => !Number.isNaN(n))
+    .reduce((max, n) => (n > max ? n : max), 0);
 }
 
+// Local fallback from whatever the page already holds.
+//
+// FIXED: this used to `return` inside the loop, so it incremented the
+// FIRST id it happened to see rather than the highest. With ADM-001 and
+// ADM-006 present it would offer ADM-002 — an ID that may well be free
+// today and collide tomorrow.
+function getNextIdFor(kind) {
+  const existing = kind === "chamber" ? state.chambers : state.admins;
+  const prefix = kind === "chamber" ? "LC-AIOT-" : "ADM-";
+  const ids = (existing || []).map((item) => String(item?.id || "")).filter(Boolean);
+  const next = highestIdNumber(ids) + 1;
+  return `${prefix}${String(next).padStart(3, "0")}`;
+}
+
+// Authoritative next ID: ask the table itself.
+//
+// WHY NOT THE RPC ALONE. resolveNextId used to trust peek_next_*_id
+// outright. "Peek" is non-consuming, and rows are inserted with an
+// explicit id rather than drawing from that sequence — so nothing ever
+// advances it. It returned ADM-006, the row was created, and the next
+// call returned ADM-006 again: a duplicate primary key, surfacing as the
+// 409 on save.
+//
+// The table is the only source that cannot drift. The RPC is still
+// consulted first (it may encode a numbering convention this code does
+// not know), but its answer is REJECTED if that id already exists.
 async function resolveNextId(kind) {
+  const table = kind === "chamber" ? "chambers" : "admins";
+  const prefix = kind === "chamber" ? "LC-AIOT-" : "ADM-";
   const rpcName = kind === "chamber" ? "peek_next_chamber_id" : "peek_next_admin_id";
+
+  let taken = [];
+  try {
+    const { data, error } = await supabase.from(table).select("id");
+    if (!error && Array.isArray(data)) taken = data.map((r) => String(r.id));
+  } catch (error) {
+    console.warn(`Could not read ${table} for ID allocation.`, error);
+  }
 
   try {
     const { data, error } = await supabase.rpc(rpcName);
-    if (!error && data) return data;
+    if (!error && data && !taken.includes(String(data))) return data;
+    if (data) {
+      console.warn(
+        `${rpcName} returned ${data}, which already exists — ` +
+        `falling back to max+1.`);
+    }
   } catch (error) {
-    console.warn(`RPC ${rpcName} unavailable, using a local fallback ID.`, error);
+    console.warn(`RPC ${rpcName} unavailable, using max+1.`, error);
   }
 
+  if (taken.length) {
+    return `${prefix}${String(highestIdNumber(taken) + 1).padStart(3, "0")}`;
+  }
   return getNextIdFor(kind);
 }
 
@@ -1158,7 +1199,10 @@ async function handleChamberSave(event) {
       const { error } = await supabase.from("chambers").update(updatePayload).eq("id", data.id);
       if (error) throw error;
     } else {
-      const id = state.nextChamberId || (await resolveNextId("chamber"));
+      // Re-derive rather than trusting state.nextChamberId, which is
+      // computed when the dialog opens and goes stale — the same defect
+      // that produced duplicate ADM ids on the admin side.
+      const id = await resolveNextId("chamber");
       const { error } = await supabase.from("chambers").insert({
         id,
         name: data.name.trim(),
@@ -1201,17 +1245,51 @@ async function handleAdminSave(event) {
 
   try {
     if (isEditing) {
+      // C-3: EMAIL AND PASSWORD NOW LIVE IN SUPABASE AUTH, not here.
+      //
+      // Writing them to this table would appear to succeed and change
+      // nothing about signing in — the worst kind of failure, because
+      // an admin would be locked out believing their password had been
+      // updated. Both are therefore handled explicitly.
       const updatePayload = {
         name: data.name.trim(),
-        email: data.email.trim(),
         role: data.role,
       };
-
-      if (data.password) {
-        updatePayload.password = await hashPassword(data.password);
-      }
       if (existing?.status) {
         updatePayload.status = existing.status;
+      }
+
+      const newEmail = data.email.trim().toLowerCase();
+      if (existing && newEmail && newEmail !== String(existing.email).toLowerCase()) {
+        alert(
+          "Email cannot be changed here.\n\n" +
+          "Sign-in is handled by Supabase Auth, so changing it in this " +
+          "table alone would leave the admin unable to log in. Change it " +
+          "under Authentication → Users, then edit it here to match.");
+        return;
+      }
+
+      if (data.password) {
+        const { data: sessionData } = await supabase.auth.getUser();
+        const isSelf = sessionData?.user?.id && existing?.auth_user_id &&
+                       sessionData.user.id === existing.auth_user_id;
+
+        if (isSelf) {
+          // You can change your OWN password from the browser.
+          const { error: pwErr } =
+            await supabase.auth.updateUser({ password: data.password });
+          if (pwErr) throw pwErr;
+          // Mirror it for one release so a rollback stays possible.
+          updatePayload.password = await hashPassword(data.password);
+        } else {
+          // Changing someone ELSE's password needs the service key,
+          // which must never reach a browser.
+          alert(
+            "You can only change your own password here.\n\n" +
+            "To reset another admin's password, use Supabase → " +
+            "Authentication → Users → (select the user) → Reset password.");
+          return;
+        }
       }
 
       const { error } = await supabase.from("admins").update(updatePayload).eq("id", data.id);
@@ -1410,8 +1488,31 @@ async function deleteChamber(id) {
 }
 
 async function deleteAdmin(id) {
-  if (!confirm(`Remove admin ${id}?`)) return;
-  await supabase.from("admins").delete().eq("id", id);
+  // C-3: deleting the row revokes access immediately — is_admin() looks
+  // for an admins row matching auth.uid(), and login rejects an auth
+  // user with no row. But the Supabase Auth user itself SURVIVES, and
+  // the browser cannot remove it (that needs the service key). Left
+  // alone they accumulate, and the address stays unusable for a future
+  // admin because sign-up reports it as taken.
+  const admin = state.admins.find((a) => a.id === id);
+  const email = admin?.email ? ` (${admin.email})` : "";
+
+  if (!confirm(
+    `Remove admin ${id}${email}?\n\n` +
+    `Access is revoked immediately. You must also delete the matching ` +
+    `user under Supabase → Authentication → Users, or that email cannot ` +
+    `be reused.`)) return;
+
+  const { error } = await supabase.from("admins").delete().eq("id", id);
+  if (error) {
+    alert("Could not remove admin: " + error.message);
+    return;
+  }
+  if (admin?.email) {
+    alert(
+      `Admin removed.\n\nNow delete this user in Supabase → ` +
+      `Authentication → Users:\n\n${admin.email}`);
+  }
   await loadData();
 }
 
