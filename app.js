@@ -666,14 +666,14 @@ function chamberModal() {
             <input name="device_url" type="url" placeholder="https://api.lactucaiot.app" value="${esc(item?.device_url || "")}" />
             <small class="field-hint">The RPi4's public tunnel address — used by the app to send Control commands.</small>
           </div>
-          <!-- C-3: the key is no longer a form field.
-               `api_key` is not SELECT-able or UPDATE-able by the anon
-               role (C-2), so rendering it here produced a blank box and
-               saving it silently did nothing. It now goes through
-               admin_get/set_chamber_api_key(), which check is_admin()
-               server-side — so this works for a signed-in admin and for
-               nobody else, and stays correct when growers become
-               authenticated in Stage 2. -->
+          <!-- C-3: the key is no longer a form field. The api_key column
+               is not SELECT-able or UPDATE-able by the anon role (C-2),
+               so rendering it here produced a blank box and saving it
+               silently did nothing. It now goes through the
+               admin_get/set_chamber_api_key functions, which check
+               is_admin() server-side - so this works for a signed-in
+               admin and for nobody else, and stays correct when growers
+               become authenticated in Stage 2. -->
           <div class="field span-2">
             <label>API Key</label>
             <div class="password-wrap">
