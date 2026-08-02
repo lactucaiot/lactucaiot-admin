@@ -1217,32 +1217,26 @@ async function handleAdminSave(event) {
       const { error } = await supabase.from("admins").update(updatePayload).eq("id", data.id);
       if (error) throw error;
     } else {
-      const id = state.nextAdminId || (await resolveNextId("admin"));
+      // Always re-derive the ID rather than trusting state.nextAdminId,
+      // which is computed when the dialog opens and goes stale if the
+      // admin list was empty or unreadable at that moment — handing back
+      // an ID that already exists and 409-ing on the primary key.
+      const id = await resolveNextId("admin");
       const email = data.email.trim().toLowerCase();
 
       // C-3 Stage 1 — every admin created from here on gets a Supabase
       // Auth identity, so no later migration is ever needed.
       //
-      // WHY A SECOND CLIENT: supabase.auth.signUp() replaces the CURRENT
-      // session with the newly created user's — so creating an admin
-      // would silently sign you out and leave you logged in as the
-      // person you just made. A client with persistSession:false creates
-      // the account without touching your own token.
-      const signupClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-        auth: { persistSession: false, autoRefreshToken: false },
-      });
-      const { data: created, error: signUpErr } =
-        await signupClient.auth.signUp({ email, password: data.password });
-
-      if (signUpErr) throw signUpErr;
-      if (!created?.user) {
-        throw new Error(
-          "Sign-up returned no user. If email confirmation is switched on " +
-          "in Supabase, turn it off — these accounts use addresses that " +
-          "do not receive mail.");
-      }
-
-      const { error } = await supabase.from("admins").insert({
+      // ORDER MATTERS. The first version created the Auth user first,
+      // and when the admins insert failed it left an ORPHANED Auth user:
+      // invisible in this portal, and blocking any retry with that email
+      // because sign-up then reports the address as taken.
+      //
+      // Inserting the row first inverts the failure: a half-finished
+      // admin is a row with a null auth_user_id — visible here, unable
+      // to sign in (is_admin() requires the link), and easy to delete.
+      // The failure you can see is always the better one.
+      const { error: insertErr } = await supabase.from("admins").insert({
         id,
         name: data.name.trim(),
         email,
@@ -1252,20 +1246,62 @@ async function handleAdminSave(event) {
         password: await hashPassword(data.password),
         role: data.role,
         status: "Active",
-        auth_user_id: created.user.id,
       });
+      if (insertErr) throw insertErr;
+
+      // WHY A SECOND CLIENT: supabase.auth.signUp() replaces the CURRENT
+      // session with the newly created user's — so creating an admin
+      // would silently sign you out and log you in as the person you
+      // just made. A client with persistSession:false creates the
+      // account without touching your own token.
+      const signupClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      });
+      const { data: created, error: signUpErr } =
+        await signupClient.auth.signUp({ email, password: data.password });
+
+      if (signUpErr || !created?.user) {
+        // Roll the row back so a retry starts clean.
+        await supabase.from("admins").delete().eq("id", id);
+        throw new Error(
+          (signUpErr?.message ||
+            "Sign-up returned no user. If email confirmation is switched " +
+            "on in Supabase, turn it off — these accounts use addresses " +
+            "that do not receive mail.") +
+          "\n\nThe draft admin row was removed, so you can try again.");
+      }
+
+      const { error } = await supabase.from("admins")
+        .update({ auth_user_id: created.user.id }).eq("id", id);
       if (error) throw error;
     }
 
     state.modal = null;
     await loadData();
   } catch (error) {
+    // C-3: say WHICH constraint failed. "Check the console" hides a
+    // message the database already worded precisely, and a 409 here has
+    // several distinct causes that need different fixes.
     console.error("Failed to save admin:", error);
-    alert("Unable to save admin. Check the browser console for details.");
+    const detail = [error?.message, error?.details, error?.hint, error?.code]
+      .filter(Boolean).join(" · ");
+
+    let guidance = "";
+    if (error?.code === "23505" || `${error?.message}`.includes("duplicate")) {
+      guidance =
+        "\n\nA unique column already has this value. Usually one of:" +
+        "\n • that email already exists in the admins table" +
+        "\n • that Admin ID is already taken" +
+        "\n • that auth user is already linked to another admin row" +
+        "\n\nIf a previous attempt half-succeeded, an orphaned Auth user " +
+        "may exist for this email — delete it under Authentication → " +
+        "Users before retrying.";
+    }
+    alert("Unable to save admin.\n\n" + (detail || error) + guidance);
   }
 }
 
-async function handleTicketSave(event) {  
+async function handleTicketSave(event) {
   event.preventDefault();
   const data = formObject(event.target);
   const chamber = state.chambers.find((c) => c.id === data.chamberId);
