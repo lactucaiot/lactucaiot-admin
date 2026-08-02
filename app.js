@@ -666,13 +666,27 @@ function chamberModal() {
             <input name="device_url" type="url" placeholder="https://api.lactucaiot.app" value="${esc(item?.device_url || "")}" />
             <small class="field-hint">The RPi4's public tunnel address — used by the app to send Control commands.</small>
           </div>
+          <!-- C-3: the key is no longer a form field.
+               `api_key` is not SELECT-able or UPDATE-able by the anon
+               role (C-2), so rendering it here produced a blank box and
+               saving it silently did nothing. It now goes through
+               admin_get/set_chamber_api_key(), which check is_admin()
+               server-side — so this works for a signed-in admin and for
+               nobody else, and stays correct when growers become
+               authenticated in Stage 2. -->
           <div class="field span-2">
-            <label for="chamberApiKey">API Key</label>
+            <label>API Key</label>
             <div class="password-wrap">
-              <input id="chamberApiKey" name="api_key" type="text" value="${esc(item?.api_key || "")}" readonly />
-              <button type="button" class="icon-button" data-generate-api-key aria-label="Generate new API key"><i class="ti ti-refresh"></i></button>
+              <input id="chamberApiKey" type="text" value="" readonly
+                     placeholder="Hidden — use Reveal or Rotate" />
+              <button type="button" class="icon-button" data-reveal-api-key
+                      data-chamber="${esc(item?.id || "")}"
+                      aria-label="Reveal API key"><i class="ti ti-eye"></i></button>
+              <button type="button" class="icon-button" data-rotate-api-key
+                      data-chamber="${esc(item?.id || "")}"
+                      aria-label="Rotate API key"><i class="ti ti-refresh"></i></button>
             </div>
-            <small class="field-hint">Sent by the RPi4 as X-API-Key — regenerate if this chamber's key is ever compromised.</small>
+            <small class="field-hint">Sent by the RPi4 as X-API-Key. After rotating, set <code>Environment=API_KEY=…</code> on the Pi and restart the service, or the chamber will stop responding.</small>
           </div>
         </div>
         <div class="modal-foot">
@@ -756,9 +770,56 @@ function bindEvents() {
     });
   });
 
-  document.querySelectorAll("[data-generate-api-key]").forEach((button) => {
-    button.addEventListener("click", () => {
-      document.getElementById("chamberApiKey").value = crypto.randomUUID().replace(/-/g, "");
+  // C-3: reveal / rotate the API key through admin-only RPCs.
+  //
+  // The old handler just generated a UUID into the form field and let
+  // handleChamberSave write it. That path is gone: `api_key` is neither
+  // readable nor writable by the anon role, so the write silently did
+  // nothing. These call SECURITY DEFINER functions that verify
+  // is_admin() inside the database.
+  document.querySelectorAll("[data-reveal-api-key]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const chamberId = button.dataset.chamber;
+      if (!chamberId) return;
+      const { data, error } = await supabase.rpc(
+        "admin_get_chamber_api_key", { p_chamber_id: chamberId });
+      if (error) {
+        alert("Could not read the API key: " + error.message);
+        return;
+      }
+      document.getElementById("chamberApiKey").value = data || "(not set)";
+    });
+  });
+
+  document.querySelectorAll("[data-rotate-api-key]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const chamberId = button.dataset.chamber;
+      if (!chamberId) {
+        alert("Save the chamber first, then rotate its key.");
+        return;
+      }
+      // Rotating breaks the chamber until the Pi is updated to match, so
+      // it is worth one deliberate confirmation rather than a stray click
+      // on an icon.
+      if (!confirm(
+        `Rotate the API key for ${chamberId}?\n\n` +
+        `The chamber will stop responding until you set the new key in ` +
+        `its systemd file (Environment=API_KEY=…) and restart the ` +
+        `service.`)) return;
+
+      const newKey = crypto.randomUUID().replace(/-/g, "");
+      const { data, error } = await supabase.rpc(
+        "admin_set_chamber_api_key",
+        { p_chamber_id: chamberId, p_new_key: newKey });
+      if (error) {
+        alert("Could not rotate the API key: " + error.message);
+        return;
+      }
+      document.getElementById("chamberApiKey").value = data || newKey;
+      alert(
+        "New API key:\n\n" + (data || newKey) +
+        "\n\nCopy it to the Pi now — this is the only time it is shown " +
+        "without reopening this dialog.");
     });
   });
 
@@ -772,7 +833,11 @@ function bindEvents() {
   });
 
   document.querySelectorAll("[data-logout]").forEach((button) => {
-    button.addEventListener("click", () => {
+    button.addEventListener("click", async () => {
+      // C-3: clear the real token as well as the UI session. Without
+      // this, signing out would leave a valid JWT in local storage and
+      // the next page load would silently still be authenticated.
+      await supabase.auth.signOut();
       setSession(null);
       state.active = "dashboard";
       state.drawerOpen = false;
@@ -890,33 +955,66 @@ function bindEvents() {
   document.querySelector("#adminForm")?.addEventListener("submit", handleAdminSave);
 }
 
+// C-3 Stage 1 — login now goes through Supabase Auth.
+//
+// WHAT THIS REPLACES, AND WHY IT MATTERED
+// The previous version did `.from("admins").select("*")` with the ANON key
+// and compared the password in the browser. Two consequences:
+//
+//   1. Every admin's bcrypt hash was handed to any caller holding the anon
+//      key — which ships in the portal's config.js and in the Flutter app,
+//      so it is public. Offline cracking was a copy-paste away.
+//   2. There was no server-side session. `state.session` came from
+//      sessionStorage, so setting that value by hand produced a working
+//      portal. Authentication was decorative.
+//
+// signInWithPassword() returns a real JWT that supabase-js attaches to every
+// subsequent request. Combined with the `is_admin()` policies, a forged
+// sessionStorage entry now yields a UI shell and nothing else: the database
+// refuses each query behind it.
+//
+// The admins row is still read afterwards, but only for display (name,
+// role). Identity comes from the token, not from that row.
 async function handleLogin(event) {
   event.preventDefault();
   const role = document.querySelector("[data-login-role].active").dataset.loginRole;
   const email = document.querySelector("#loginEmail").value.trim().toLowerCase();
   const password = document.querySelector("#loginPassword").value;
-  
-  const { data, error } = await supabase
-    .from("admins")
-    .select("*")
-    .eq("email", email)
-    .eq("role", role)
-    .single();
 
-  if (error || !data) {
-    state.error = "Invalid email, password, or selected role.";
+  const { data: auth, error: authError } =
+    await supabase.auth.signInWithPassword({ email, password });
+
+  if (authError || !auth?.user) {
+    state.error = "Invalid email or password.";
     render();
     return;
   }
 
-  const passwordMatches = await checkPasswordMatch(password, data.password);
-  if (!passwordMatches) {
+  const { data, error } = await supabase
+    .from("admins")
+    .select("*")
+    .eq("auth_user_id", auth.user.id)
+    .maybeSingle();
+
+  // Signed in to Supabase but with no admins row — an auth user that was
+  // never linked. Sign back out so we never hold a token that implies
+  // access the policies will refuse anyway.
+  if (error || !data) {
+    await supabase.auth.signOut();
+    state.error = "This account is not registered as an administrator.";
+    render();
+    return;
+  }
+
+  if (data.role !== role) {
+    await supabase.auth.signOut();
     state.error = "Invalid email, password, or selected role.";
     render();
     return;
   }
 
   if (data.status !== "Active") {
+    await supabase.auth.signOut();
     state.error = "This admin account is not active.";
     render();
     return;
@@ -1041,11 +1139,13 @@ async function handleChamberSave(event) {
 
   try {
     if (isEditing) {
+      // C-3: `api_key` deliberately absent. The anon role cannot write
+      // that column, so including it made the whole UPDATE fail — the
+      // key is managed by the Rotate action instead.
       const updatePayload = {
         name: data.name.trim(),
         email: data.email.trim(),
         device_url: data.device_url ? data.device_url.trim() : null,
-        api_key: data.api_key ? data.api_key.trim() : null,
       };
 
       if (data.password) {
@@ -1068,7 +1168,8 @@ async function handleChamberSave(event) {
         registered: new Date().toISOString().slice(0, 10),
         source: "admin",
         device_url: data.device_url ? data.device_url.trim() : null,
-        api_key: data.api_key ? data.api_key.trim() : null,
+        // api_key omitted — the column default gen_random_uuid() fills
+        // it, and Rotate changes it later. See C-3.
       });
       if (error) throw error;
     }
@@ -1117,13 +1218,41 @@ async function handleAdminSave(event) {
       if (error) throw error;
     } else {
       const id = state.nextAdminId || (await resolveNextId("admin"));
+      const email = data.email.trim().toLowerCase();
+
+      // C-3 Stage 1 — every admin created from here on gets a Supabase
+      // Auth identity, so no later migration is ever needed.
+      //
+      // WHY A SECOND CLIENT: supabase.auth.signUp() replaces the CURRENT
+      // session with the newly created user's — so creating an admin
+      // would silently sign you out and leave you logged in as the
+      // person you just made. A client with persistSession:false creates
+      // the account without touching your own token.
+      const signupClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      });
+      const { data: created, error: signUpErr } =
+        await signupClient.auth.signUp({ email, password: data.password });
+
+      if (signUpErr) throw signUpErr;
+      if (!created?.user) {
+        throw new Error(
+          "Sign-up returned no user. If email confirmation is switched on " +
+          "in Supabase, turn it off — these accounts use addresses that " +
+          "do not receive mail.");
+      }
+
       const { error } = await supabase.from("admins").insert({
         id,
         name: data.name.trim(),
-        email: data.email.trim(),
+        email,
+        // Kept for one release so a rollback is possible. Supabase Auth
+        // owns passwords now; this column is no longer consulted at
+        // login and should be dropped once you are confident.
         password: await hashPassword(data.password),
         role: data.role,
         status: "Active",
+        auth_user_id: created.user.id,
       });
       if (error) throw error;
     }
